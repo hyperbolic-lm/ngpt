@@ -69,14 +69,18 @@ class Block(nn.Module):
         super().__init__()
         self.config = config
 
-        self.key = nn.Linear(config.n_embd, config.n_embd, bias=config.bias, dtype=torch.bfloat16)
-        self.query = nn.Linear(config.n_embd, config.n_embd, bias=config.bias, dtype=torch.bfloat16)
-        self.value = nn.Linear(config.n_embd, config.n_embd, bias=config.bias, dtype=torch.bfloat16)
-        self.att_c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias, dtype=torch.bfloat16)
-        
-        self.c_fc    = nn.Linear(config.n_embd, 2 * 4 * config.n_embd, bias=config.bias, dtype=torch.bfloat16)
+        # storage dtype of the matrix parameters; embeddings and the scaling
+        # parameters below stay in float32 regardless (see README discussion)
+        wdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16}[config.weight_dtype]
+
+        self.key = nn.Linear(config.n_embd, config.n_embd, bias=config.bias, dtype=wdtype)
+        self.query = nn.Linear(config.n_embd, config.n_embd, bias=config.bias, dtype=wdtype)
+        self.value = nn.Linear(config.n_embd, config.n_embd, bias=config.bias, dtype=wdtype)
+        self.att_c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias, dtype=wdtype)
+
+        self.c_fc    = nn.Linear(config.n_embd, 2 * 4 * config.n_embd, bias=config.bias, dtype=wdtype)
         self.silu    = nn.SiLU()
-        self.mlp_c_proj  = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias, dtype=torch.bfloat16)
+        self.mlp_c_proj  = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias, dtype=wdtype)
 
         if (config.use_nGPT == 0):
             self.rmsnorm_att = RMSNorm(config.n_embd)
@@ -188,7 +192,8 @@ class GPTConfig:
     base_scale: float = 1.0 / (1024.0 ** 0.5)    # 1 / sqrt(n_embd)
     use_nGPT: int = 0
     dropout: float = 0.0
-    bias: bool = False 
+    bias: bool = False
+    weight_dtype: str = 'bfloat16' # 'bfloat16' or 'float32': storage dtype of matrix weights
 
 class RMSNorm(torch.nn.Module):
     def __init__(self, embdim: int, eps: float = 1e-6) -> None:

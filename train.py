@@ -71,6 +71,8 @@ wandb_project = 'owt'
 wandb_run_name = 'gpt2' # 'run' + str(time.time())
 # data
 dataset = 'openwebtext'
+data_dir = '' # absolute path to the dir holding train.bin/val.bin; '' = legacy auto-detect relative to cwd
+out_dir = './' # where ckpt.pt/stat/args/finished are written (e.g. somewhere on /scratch)
 gradient_accumulation_steps = 64 # used to simulate larger batch sizes
 batch_size = 8 # if gradient_accumulation_steps > 1, this is the micro-batch size
 # model
@@ -89,6 +91,7 @@ backend = 'nccl' # 'nccl', 'gloo', etc.
 # system
 device = 'cuda' # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1' etc., or try 'mps' on macbooks
 dtype = 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16' # 'float32', 'bfloat16', or 'float16', the latter will auto implement a GradScaler
+weight_dtype = 'bfloat16' # 'bfloat16' or 'float32': storage dtype of the matrix parameters (embeddings stay float32)
 compile = False # use PyTorch 2.0 to compile the model to be faster
 # 
 time_limit_seconds = 1000000000     # stop after x seconds 
@@ -155,7 +158,6 @@ tokens_per_iter = gradient_accumulation_steps * ddp_world_size * batch_size * bl
 print(f"tokens per iteration will be: {tokens_per_iter:,}")
 
 
-out_dir='./'
 if master_process:
     if not os.path.exists(out_dir):
         os.makedirs(out_dir)
@@ -176,10 +178,11 @@ ctx = nullcontext() if device_type == 'cpu' else torch.amp.autocast(device_type=
 
 # poor man's data loader
 tdataloading_begin = time.time()
-if os.path.exists('./../../data'):
-    data_dir = os.path.join('./../../data', dataset)
-else:   
-    data_dir = os.path.join('data', dataset)
+if data_dir == '':
+    if os.path.exists('./../../data'):
+        data_dir = os.path.join('./../../data', dataset)
+    else:
+        data_dir = os.path.join('data', dataset)
 train_data = np.memmap(os.path.join(data_dir, 'train.bin'), dtype=np.uint16, mode='r')
 val_data = np.memmap(os.path.join(data_dir, 'val.bin'), dtype=np.uint16, mode='r')
 
@@ -217,8 +220,8 @@ print("Data loading time: %f sec" % (time.time()-tdataloading_begin))
 
 # model init
 tmodelinit_begin = time.time()
-model_args = dict(use_nGPT=use_nGPT, n_layer=n_layer, n_head=n_head, n_embd=n_embd, block_size=block_size, base_scale=base_scale, 
-                  bias=bias, vocab_size=None, dropout=dropout) # start with model_args from command line
+model_args = dict(use_nGPT=use_nGPT, n_layer=n_layer, n_head=n_head, n_embd=n_embd, block_size=block_size, base_scale=base_scale,
+                  bias=bias, vocab_size=None, dropout=dropout, weight_dtype=weight_dtype) # start with model_args from command line
 if init_from == 'scratch':
     # init a new model from scratch
     print("Initializing a new model from scratch")
@@ -238,6 +241,8 @@ elif init_from == 'resume':
     # the rest of the attributes (e.g. dropout) can stay as desired from command line
     for k in ['use_nGPT', 'base_scale', 'n_layer', 'n_head',  'n_embd', 'block_size', 'bias', 'vocab_size']:
         model_args[k] = checkpoint_model_args[k]
+    # older checkpoints predate the weight_dtype key; keep the command-line value then
+    model_args['weight_dtype'] = checkpoint_model_args.get('weight_dtype', weight_dtype)
     # create the model
     gptconf = GPTConfig(**model_args)
     model = GPT(gptconf)
