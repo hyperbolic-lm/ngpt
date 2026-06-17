@@ -1,0 +1,4 @@
+slurm_logs/
+tailscale_1.82.5_amd64/
+~/.tailscale/
+__pycache__/
