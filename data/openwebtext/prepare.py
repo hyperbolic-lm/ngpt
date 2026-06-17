@@ -6,9 +6,9 @@
 #   pass a /scratch path and export HF_HOME to /scratch first - the raw
 #   dataset cache is ~80GB and will not fit in the home quota.
 #
-# Note: openwebtext is a script-based HF dataset. If load_dataset fails on
-# datasets>=3.0 ("trust_remote_code" removed), pin datasets==2.20.0 in the
-# hfm env: pip install "datasets==2.20.0"
+# Note: datasets>=3.0 requires the namespaced hub id Skylion007/openwebtext
+# (the bare "openwebtext" alias is rejected) and serves the parquet
+# conversion, so no trust_remote_code is needed.
 
 import os
 import sys
@@ -25,10 +25,7 @@ os.makedirs(out_dir, exist_ok=True)
 enc = tiktoken.get_encoding("gpt2")
 
 if __name__ == '__main__':
-    try:
-        dataset = load_dataset("openwebtext", num_proc=num_proc, trust_remote_code=True)
-    except TypeError:  # older datasets without the trust_remote_code kwarg
-        dataset = load_dataset("openwebtext", num_proc=num_proc)
+    dataset = load_dataset("Skylion007/openwebtext", num_proc=num_proc)
 
     # owt has only a train split; carve out a small val split
     split_dataset = dataset["train"].train_test_split(test_size=0.0005, seed=2357, shuffle=True)

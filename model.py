@@ -38,7 +38,13 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 import numpy as np
-from flash_attn import flash_attn_qkvpacked_func, flash_attn_func
+try:
+    from flash_attn import flash_attn_qkvpacked_func, flash_attn_func
+    HAS_FLASH_ATTN = True
+except ModuleNotFoundError:
+    # fall back to torch SDPA (same math incl. custom softmax scale; on
+    # Ampere+/bf16 it dispatches to flash/mem-efficient kernels anyway)
+    HAS_FLASH_ATTN = False
 
 
 def apply_rotary_position_embeddings(sinusoidal_pos, q, k):
@@ -137,7 +143,15 @@ class Block(nn.Module):
         sqrt_head_dim = (self.config.n_embd / self.config.n_head) ** 0.5
         if (self.config.use_nGPT == 0): softmax_scale = 1.0 / sqrt_head_dim 
         if (self.config.use_nGPT == 1): softmax_scale = sqrt_head_dim 
-        y = flash_attn_func(q.to(dtype=torch.bfloat16), k.to(dtype=torch.bfloat16), v.to(dtype=torch.bfloat16), dropout_p=0.0, softmax_scale=softmax_scale, causal=True, window_size=(-1, -1), alibi_slopes=None, deterministic=True)
+        if HAS_FLASH_ATTN:
+            y = flash_attn_func(q.to(dtype=torch.bfloat16), k.to(dtype=torch.bfloat16), v.to(dtype=torch.bfloat16), dropout_p=0.0, softmax_scale=softmax_scale, causal=True, window_size=(-1, -1), alibi_slopes=None, deterministic=True)
+        else:
+            # SDPA wants (B, H, T, D) instead of flash_attn's (B, T, H, D)
+            y = F.scaled_dot_product_attention(
+                q.transpose(1, 2).to(dtype=torch.bfloat16),
+                k.transpose(1, 2).to(dtype=torch.bfloat16),
+                v.transpose(1, 2).to(dtype=torch.bfloat16),
+                dropout_p=0.0, is_causal=True, scale=softmax_scale).transpose(1, 2)
         y = y.to(dtype=q.dtype)
         y = y.contiguous().view(B, T, self.config.n_embd)
 
