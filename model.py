@@ -68,6 +68,25 @@ def get_sinusoidal_embeddings( n_positions, dim):
     sinusoidal_emb[:, 1::2] = torch.cos(position * div_term)
     return sinusoidal_emb
 
+@dataclass
+class Geometry:
+    SPHERE: str = "sphere"
+    HYPERBOLIC: str = "hyperbolic"
+
+def scale_geometry(
+    scale: Union[float, torch.Tensor],
+    geometry: str=Geometry.SPHERE
+) -> Union[float, torch.FloatTensor]:
+    if geometry == Geometry.SPHERE:
+        return scale
+    elif geometry == Geometry.HYPERBOLIC:
+        ret = torch.tanh(scale / 2.0)
+        if torch.is_tensor(scale):
+            return ret
+        else:
+            return ret.item()
+    else:
+        raise ValueError(f"Geometry, {geometry}, is not supported.")
 
 class Block(nn.Module):
 
@@ -137,8 +156,8 @@ class Block(nn.Module):
 
         if (self.config.use_nGPT == 1):
             sqk = (self.sqk * (self.sqk_init_value/self.sqk_init_scaling)).view(1, 1, self.config.n_head, self.config.n_embd // self.config.n_head)
-            q = sqk * self.justnorm(q)  
-            k = sqk * self.justnorm(k)  
+            q = scale_geometry(scale=sqk, geometry=self.config.geometry) * self.justnorm(q)  
+            k = scale_geometry(scale=sqk, geometry=self.config.geometry) * self.justnorm(k)  
 
         sqrt_head_dim = (self.config.n_embd / self.config.n_head) ** 0.5
         if (self.config.use_nGPT == 0): softmax_scale = 1.0 / sqrt_head_dim 
@@ -175,7 +194,7 @@ class Block(nn.Module):
             hin = self.rmsnorm_mlp(h)
         uv = self.c_fc(hin)
         if (self.config.use_nGPT == 1):
-            suv = (self.suv * ((self.suv_init_value/self.suv_init_scaling) * (self.config.n_embd ** 0.5))) 
+            suv = (scale_geometry(scale=self.suv, geometry=self.config.geometry) * ((self.suv_init_value/self.suv_init_scaling) * (self.config.n_embd ** 0.5))) 
             uv = suv * uv  
         u, v = torch.chunk(uv, 2, dim=-1)
         x_mlp = u * self.silu(v)
@@ -204,6 +223,7 @@ class GPTConfig:
     n_head: int = 12
     n_embd: int = 1024
     base_scale: float = 1.0 / (1024.0 ** 0.5)    # 1 / sqrt(n_embd)
+    geometry: str = Geometry.SPHERE
     use_nGPT: int = 0
     dropout: float = 0.0
     bias: bool = False
@@ -301,14 +321,14 @@ class GPT(nn.Module):
             logits = self.lm_head(x)
             if (self.config.use_nGPT == 1):
                 sz = self.sz * (self.sz_init_value/self.sz_init_scaling)
-                logits = sz * logits
+                logits = scale_geometry(scale=sz, geometry=self.config.geometry) * logits
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
         else:
             # inference-time mini-optimization: only forward the lm_head on the very last position
             logits = self.lm_head(x[:, [-1], :]) # note: using list [-1] to preserve the time dim
             if (self.config.use_nGPT == 1):
                 sz = self.sz * (self.sz_init_value/self.sz_init_scaling)
-                logits = sz * logits
+                logits = scale_geometry(scale=sz, geometry=self.config.geometry) * logits
             loss = None
 
         return logits, loss
