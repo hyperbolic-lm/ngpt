@@ -163,18 +163,6 @@ For each experiment, create a project folder under ``experiments`` with ``{proje
 
 ### Anaconda Environment
 
-Follow ``README.md``: ``conda create -n sfm python=3.12`` then ``pip install -r requirements.txt``.
-Python **≥3.10** is required (the code uses ``dataclass(kw_only=)``); 3.12 is the reference.
-
-- ``torch`` / ``numpy`` are intentionally **not** pinned in ``requirements.txt`` (the NGC base
-  image provides them) — install a ``torch`` build matching the node CUDA yourself
-  (cu128 for the A100 / RTX-6000-Ada nodes).
-- ``simple-slurm==0.3.6`` (for the sweeps) is now pinned in ``requirements.txt``, so
-  ``pip install -r requirements.txt`` covers it.
-- Export ``TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1`` when loading checkpoints — torch's
-  ``weights_only`` default rejects the pickled Lightning ckpts.
-- Reusing an existing ``sfm`` env instead of building ``sfm``, if there is no env named ``sfm``, build it via
-
 ```bash
 conda create -n sfm python=3.12
 conda activate sfm
@@ -184,7 +172,7 @@ pip install -r requirements.txt
 ### Training & Sampling Run Setup
 
 - Create functions / classes in ``experiment.py`` to set up the soft link of the checkpoint for training and sampling run (if needed)
-- If use ``ch2263@Unicorn``, save the checkpoints at ``/scratch/ch2263/syc_workspace/sfm_output/{project_name}/{run_name}/checkpoints`` and create a soft link at ``${OUTPUT_DIR}/checkpoints`` to link the actual checkpoint path ``/scratch/ch2263/syc_workspace/sfm_output/{project_name}/{run_name}/checkpoints`` before the training starts. This should be handle in ``experiment.py``
+- If use ``ch2263@Unicorn``, save the checkpoints at ``/scratch/ch2263/syc_workspace/ngpt_output/{project_name}/{run_name}/checkpoints`` and create a soft link at ``${OUTPUT_DIR}/checkpoints`` to link the actual checkpoint path ``/scratch/ch2263/syc_workspace/ngpt_output/{project_name}/{run_name}/checkpoints`` before the training starts. This should be handle in ``experiment.py``
 - The sweep.py of each experiment should use setup method in ``experiment.py`` to handle the storage of ch2263@unicorn
 
 ### Training Script
@@ -200,13 +188,11 @@ loops inside; the sweep parameterizes it via env vars).
   ``RUN_NAME``, ``WANDB_GROUP``, ``DEVICES``, ``NUM_NODES``, ``PER_GPU_BS``
   (= ``loader.batch_size``), ``GLOBAL_BATCH`` (= ``loader.global_batch_size``),
   ``MAX_STEPS``, ``CKPT_EVERY``, ``MODEL`` (model config), ``SEQ_LEN`` (= ``model.length``).
-- Method knobs as needed: ``INIT``/``INIT_STD``, ``PRIOR_COV``/``RHO_MAX`` (H-FLM), ``LR``,
-  ``ALPHA_MAX`` (truncation), ``SELF_COND`` (LangFlow), …
 - Checkpoints → ``${OUTPUT_DIR}/checkpoints`` with ``save_top_k=1`` + ``save_last=True``.
 
 Refer to ``scripts/train/sudoku/hflm.sh`` (and ``scripts/train/tinystories/*.sh``).
 
-### Sampling Script
+<!-- ### Sampling Script
 
 Under ``scripts/sample/{dataset_name}``
 
@@ -222,7 +208,7 @@ checkpoint. Two passes:
   run so the architecture matches the checkpoint.
 - Always single-GPU: ``DEVICES=1`` + ``CUDA_VISIBLE_DEVICES=0`` (see SLURM Env Setup).
 
-Refer to ``scripts/sample/sudoku/hflm.sh`` (and ``scripts/sample/tinystories/*.sh``).
+Refer to ``scripts/sample/sudoku/hflm.sh`` (and ``scripts/sample/tinystories/*.sh``). -->
 
 ### Sweep Script
 
@@ -271,28 +257,29 @@ CKPT_PATH=<out>/checkpoints/last.ckpt OUTPUT_DIR=<out>/eval DEVICES=1 \
 
 ### Training and Sampling Outputs
 
-All checkpoints and generated text go under ``outputs/{project_name}`` (same name as the
-experiment folder under ``experiments/``), one subfolder per run:
+Each training run writes everything under its ``out_dir`` (a hydra override; the bash
+scripts default it to ``experiments/{dataset}/{run_name}``), one subfolder per run:
 
 ```
-outputs/{project_name}/{run_name}/          # = hydra.run.dir of the training run
+out_dir/                                     # = the hydra `out_dir` override (shared by all DDP ranks)
 ├── checkpoints/
-│   ├── last.ckpt                            # resume + eval load this (save_last=True)
-│   └── ...                                  # periodic step checkpoint(s), capped by save_top_k=1
-├── .hydra/ , *.log , wandb/                 # training config + logs
-└── eval/
-    ├── ppl.json                             # numerical results: val/nll, val/ppl, val/bpd
-    ├── samples_genppl.json                  # GenPPL (gen_ppl_first_chunk_retok), entropy, avg_nfe, text
-    ├── ppl/                                 # hydra run dir for the ppl_eval pass (config/logs)
-    └── sample/                              # hydra run dir for the sample_eval pass (config/logs)
+│   └── ckpt.pt                              # resume + eval load this (model/optimizer/iter/rng/config dict)
+├── .hydra/
+│   └── config.yaml                          # the resolved Hydra config for this run
+├── eval/
+│   └── ppl.json                             # latest val metrics: iter, train/nll, val/nll, val/ppl, val/bpd
+├── stat                                     # per-eval history (iter, lr, train/val loss, nGPT hparams)
+├── args                                     # argv of the launch
+└── finished                                 # marker written once iter_num >= max_iters
 ```
 
-- ``{run_name}`` = the semantic SLURM job name (e.g. ``{var}-{val}_...``).
-- ``ppl.json`` holds the ``trainer.validate()`` metrics (the denoising-CE flow bound — not a
-  true AR PPL). ``samples_genppl.json`` is the generation-quality deliverable; read GenPPL
-  **with** entropy (low GenPPL + low entropy ⇒ degenerate/repetitive collapse, not quality).
-- ``experiments/report.py {project_name}`` scans every ``{run_name}/eval/`` and writes a
-  summary table to ``experiments/{project_name}/RESULTS.md``.
+- ``{run_name}`` = the semantic SLURM job name (e.g. ``{var}-{val}_...``); set via ``RUN_NAME``.
+- Config is composed by Hydra from ``configs/`` via the Compose API (``train.py`` does
+  ``compose()`` + ``globals().update(cfg)``), **not** ``@hydra.main`` — so the N ``torchrun``
+  ranks share one explicit ``out_dir`` with no per-rank run-dir/chdir collisions.
+- ``ppl.json`` is rewritten every ``eval_interval`` with standard AR-LM metrics
+  (``val/ppl = exp(val/nll)``, ``val/bpd = val/nll / ln 2``). This codebase has no separate
+  sampling / GenPPL pass; stdout (captured by the SLURM ``.out`` log) is the run log.
 
 ### Reports and Experiment
 
