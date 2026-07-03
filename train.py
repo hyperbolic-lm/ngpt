@@ -52,7 +52,7 @@ import numpy as np
 import torch
 from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.distributed as dist
-from model import GPTConfig, GPT
+from model import GPTConfig, GPT, scale_geometry
 from torch.nn import functional as F
 from datetime import timedelta
 
@@ -98,7 +98,8 @@ time_limit_seconds = 1000000000     # stop after x seconds
 max_iters_per_launch = 1000000000   # stop after x steps of the current
 
 use_nGPT = 1
-learning_rate = 15e-4 
+geometry = 'sphere' # 'sphere' (standard nGPT) or 'hyperbolic' (scaling factors treated as a Poincare-ball radial via tanh(rho/2))
+learning_rate = 15e-4
 
 # model size and seqlen
 if (1): 
@@ -220,7 +221,7 @@ print("Data loading time: %f sec" % (time.time()-tdataloading_begin))
 
 # model init
 tmodelinit_begin = time.time()
-model_args = dict(use_nGPT=use_nGPT, n_layer=n_layer, n_head=n_head, n_embd=n_embd, block_size=block_size, base_scale=base_scale,
+model_args = dict(use_nGPT=use_nGPT, geometry=geometry, n_layer=n_layer, n_head=n_head, n_embd=n_embd, block_size=block_size, base_scale=base_scale,
                   bias=bias, vocab_size=None, dropout=dropout, weight_dtype=weight_dtype) # start with model_args from command line
 if init_from == 'scratch':
     # init a new model from scratch
@@ -239,8 +240,8 @@ elif init_from == 'resume':
     checkpoint_model_args = checkpoint['model_args']
     # force these config attributes to be equal otherwise we can't even resume training
     # the rest of the attributes (e.g. dropout) can stay as desired from command line
-    for k in ['use_nGPT', 'base_scale', 'n_layer', 'n_head',  'n_embd', 'block_size', 'bias', 'vocab_size']:
-        model_args[k] = checkpoint_model_args[k]
+    for k in ['use_nGPT', 'geometry', 'base_scale', 'n_layer', 'n_head',  'n_embd', 'block_size', 'bias', 'vocab_size']:
+        model_args[k] = checkpoint_model_args.get(k, model_args[k])
     # older checkpoints predate the weight_dtype key; keep the command-line value then
     model_args['weight_dtype'] = checkpoint_model_args.get('weight_dtype', weight_dtype)
     # create the model
@@ -343,14 +344,17 @@ def get_hparams_str(model):
         config = model.config
         module = model
     
-    resstr = "%.5f " % torch.mean( module.sz * (module.sz_init_value/module.sz_init_scaling) )
-    
+    # log the effective radius actually used in the forward pass: scale_geometry is the
+    # identity in sphere mode and tanh(rho/2) in hyperbolic mode. attn_alpha/mlp_alpha are
+    # eigen learning rates (not scaling factors), so they stay logged raw.
+    resstr = "%.5f " % torch.mean( scale_geometry(module.sz * (module.sz_init_value/module.sz_init_scaling), config.geometry) )
+
     for layer_idx in range(0, config.n_layer):
-        block = transformer["h"][layer_idx] 
-        sqk = block.sqk * (block.sqk_init_value/block.sqk_init_scaling)
+        block = transformer["h"][layer_idx]
+        sqk = scale_geometry(block.sqk * (block.sqk_init_value/block.sqk_init_scaling), config.geometry)
         attn_alpha = block.attn_alpha * (block.attn_alpha_init_value / block.attn_alpha_init_scaling)
         mlp_alpha = block.mlp_alpha * (block.mlp_alpha_init_value / block.mlp_alpha_init_scaling)
-        suv = block.suv * (block.suv_init_value/block.suv_init_scaling)
+        suv = scale_geometry(block.suv * (block.suv_init_value/block.suv_init_scaling), config.geometry)
 
         resstr = resstr + "%.5f " % torch.mean( sqk )
         resstr = resstr + "%.5f " % torch.mean( attn_alpha )

@@ -33,6 +33,7 @@ https://github.com/huggingface/transformers/blob/main/src/transformers/models/gp
 import math
 import inspect
 from dataclasses import dataclass
+from typing import Union
 
 import torch
 import torch.nn as nn
@@ -80,11 +81,10 @@ def scale_geometry(
     if geometry == Geometry.SPHERE:
         return scale
     elif geometry == Geometry.HYPERBOLIC:
-        ret = torch.tanh(scale / 2.0)
         if torch.is_tensor(scale):
-            return ret
+            return torch.tanh(scale / 2.0)
         else:
-            return ret.item()
+            return math.tanh(scale / 2.0)
     else:
         raise ValueError(f"Geometry, {geometry}, is not supported.")
 
@@ -156,12 +156,22 @@ class Block(nn.Module):
 
         if (self.config.use_nGPT == 1):
             sqk = (self.sqk * (self.sqk_init_value/self.sqk_init_scaling)).view(1, 1, self.config.n_head, self.config.n_embd // self.config.n_head)
-            q = scale_geometry(scale=sqk, geometry=self.config.geometry) * self.justnorm(q)  
-            k = scale_geometry(scale=sqk, geometry=self.config.geometry) * self.justnorm(k)  
+            sqk = scale_geometry(scale=sqk, geometry=self.config.geometry)
+            q = sqk * self.justnorm(q)
+            k = sqk * self.justnorm(k)
 
         sqrt_head_dim = (self.config.n_embd / self.config.n_head) ** 0.5
-        if (self.config.use_nGPT == 0): softmax_scale = 1.0 / sqrt_head_dim 
-        if (self.config.use_nGPT == 1): softmax_scale = sqrt_head_dim 
+        if (self.config.use_nGPT == 0): softmax_scale = 1.0 / sqrt_head_dim
+        if (self.config.use_nGPT == 1): softmax_scale = sqrt_head_dim
+        if (self.config.use_nGPT == 1 and self.config.geometry == Geometry.HYPERBOLIC):
+            # radius-aware attention temperature (fixed init-calibration): the Poincare radius
+            # r = tanh(sqk/2) scales both q and k, so the q.k logit std shrinks as r^2 -- at init
+            # this is ~tanh(0.5)^2 = 0.21x flatter attention. Divide by r_init^2 so the logit
+            # variance is restored to 1 at init (matching the sphere sqrt(d_k) calibration) while
+            # sqk keeps its temperature role: logit std = (r/r_init)^2, = 1 at init. r_init is the
+            # init radius scale_geometry(sqk_init); reduces to sqrt(d_k) once the radius reaches it.
+            r_init = scale_geometry(scale=self.sqk_init_value, geometry=self.config.geometry)
+            softmax_scale = sqrt_head_dim / (r_init ** 2)
         if HAS_FLASH_ATTN:
             y = flash_attn_func(q.to(dtype=torch.bfloat16), k.to(dtype=torch.bfloat16), v.to(dtype=torch.bfloat16), dropout_p=0.0, softmax_scale=softmax_scale, causal=True, window_size=(-1, -1), alibi_slopes=None, deterministic=True)
         else:
@@ -194,8 +204,15 @@ class Block(nn.Module):
             hin = self.rmsnorm_mlp(h)
         uv = self.c_fc(hin)
         if (self.config.use_nGPT == 1):
-            suv = (scale_geometry(scale=self.suv, geometry=self.config.geometry) * ((self.suv_init_value/self.suv_init_scaling) * (self.config.n_embd ** 0.5))) 
-            uv = suv * uv  
+            mlp_gain = self.config.n_embd ** 0.5   # sqrt(d_model): restores SiLU input variance to 1 (Appendix A.1)
+            if (self.config.geometry == Geometry.HYPERBOLIC):
+                # the radial tanh(s_v/2) shrinks the v-branch to its init radius r_init =
+                # tanh(s_v_init/2), pulling SiLU into its near-linear regime (SiLU(x)~x/2). Divide
+                # the gain by r_init so SiLU stays at its calibrated (variance-1) operating point at
+                # init; s_v still modulates the nonlinearity. Identity to sqrt(d_model) in sphere.
+                mlp_gain = mlp_gain / scale_geometry(scale=self.suv_init_value, geometry=self.config.geometry)
+            suv = (scale_geometry(scale=self.suv * (self.suv_init_value/self.suv_init_scaling), geometry=self.config.geometry) * mlp_gain)
+            uv = suv * uv
         u, v = torch.chunk(uv, 2, dim=-1)
         x_mlp = u * self.silu(v)
         h_mlp = self.mlp_c_proj(x_mlp)
