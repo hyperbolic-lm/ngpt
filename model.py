@@ -79,8 +79,8 @@ def scale_geometry(
     geometry: str=Geometry.SPHERE,
     gaussian_curvature: float=-1.0,
 ) -> Union[float, torch.FloatTensor]:
-    assert gaussian_curvature < 0.0, "Only support gaussian_curvature"
-    R: float = math.sqrt(gaussian_curvature)
+    assert gaussian_curvature < 0.0, "hyperbolic geometry requires negative gaussian_curvature"
+    R: float = math.sqrt(-gaussian_curvature)   # kappa = sqrt(-K); Poincare ball radius = 1/kappa
     if geometry == Geometry.SPHERE:
         return scale
     elif geometry == Geometry.HYPERBOLIC:
@@ -244,6 +244,7 @@ class GPTConfig:
     n_embd: int = 1024
     base_scale: float = 1.0 / (1024.0 ** 0.5)    # 1 / sqrt(n_embd)
     geometry: str = Geometry.SPHERE
+    gaussian_curvature: float = -1.0  # K < 0 (hyperbolic); radial map r = tanh(sqrt(-K)*rho/2)/sqrt(-K)
     use_nGPT: int = 0
     dropout: float = 0.0
     bias: bool = False
