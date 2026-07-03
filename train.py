@@ -99,6 +99,7 @@ max_iters_per_launch = 1000000000   # stop after x steps of the current
 
 use_nGPT = 1
 geometry = 'sphere' # 'sphere' (standard nGPT) or 'hyperbolic' (scaling factors treated as a Poincare-ball radial via tanh(rho/2))
+gaussian_curvature: float = -1.0
 learning_rate = 15e-4
 
 # model size and seqlen
@@ -351,10 +352,10 @@ def get_hparams_str(model):
 
     for layer_idx in range(0, config.n_layer):
         block = transformer["h"][layer_idx]
-        sqk = scale_geometry(block.sqk * (block.sqk_init_value/block.sqk_init_scaling), config.geometry)
+        sqk = scale_geometry(block.sqk * (block.sqk_init_value/block.sqk_init_scaling), config.geometry, gaussian_curvature=config.gaussian_curvature)
         attn_alpha = block.attn_alpha * (block.attn_alpha_init_value / block.attn_alpha_init_scaling)
         mlp_alpha = block.mlp_alpha * (block.mlp_alpha_init_value / block.mlp_alpha_init_scaling)
-        suv = scale_geometry(block.suv * (block.suv_init_value/block.suv_init_scaling), config.geometry)
+        suv = scale_geometry(block.suv * (block.suv_init_value/block.suv_init_scaling), config.geometry, gaussian_curvature=config.gaussian_curvature)
 
         resstr = resstr + "%.5f " % torch.mean( sqk )
         resstr = resstr + "%.5f " % torch.mean( attn_alpha )

@@ -76,15 +76,18 @@ class Geometry:
 
 def scale_geometry(
     scale: Union[float, torch.Tensor],
-    geometry: str=Geometry.SPHERE
+    geometry: str=Geometry.SPHERE,
+    gaussian_curvature: float=-1.0,
 ) -> Union[float, torch.FloatTensor]:
+    assert gaussian_curvature < 0.0, "Only support gaussian_curvature"
+    R: float = math.sqrt(gaussian_curvature)
     if geometry == Geometry.SPHERE:
         return scale
     elif geometry == Geometry.HYPERBOLIC:
         if torch.is_tensor(scale):
-            return torch.tanh(scale / 2.0)
+            return torch.tanh(R * scale / 2.0) / R
         else:
-            return math.tanh(scale / 2.0)
+            return math.tanh(R * scale / 2.0) / R
     else:
         raise ValueError(f"Geometry, {geometry}, is not supported.")
 
@@ -156,7 +159,7 @@ class Block(nn.Module):
 
         if (self.config.use_nGPT == 1):
             sqk = (self.sqk * (self.sqk_init_value/self.sqk_init_scaling)).view(1, 1, self.config.n_head, self.config.n_embd // self.config.n_head)
-            sqk = scale_geometry(scale=sqk, geometry=self.config.geometry)
+            sqk = scale_geometry(scale=sqk, geometry=self.config.geometry, gaussian_curvature=self.config.gaussian_curvature)
             q = sqk * self.justnorm(q)
             k = sqk * self.justnorm(k)
 
@@ -170,7 +173,7 @@ class Block(nn.Module):
             # variance is restored to 1 at init (matching the sphere sqrt(d_k) calibration) while
             # sqk keeps its temperature role: logit std = (r/r_init)^2, = 1 at init. r_init is the
             # init radius scale_geometry(sqk_init); reduces to sqrt(d_k) once the radius reaches it.
-            r_init = scale_geometry(scale=self.sqk_init_value, geometry=self.config.geometry)
+            r_init = scale_geometry(scale=self.sqk_init_value, geometry=self.config.geometry, gaussian_curvature=self.config.gaussian_curvature)
             softmax_scale = sqrt_head_dim / (r_init ** 2)
         if HAS_FLASH_ATTN:
             y = flash_attn_func(q.to(dtype=torch.bfloat16), k.to(dtype=torch.bfloat16), v.to(dtype=torch.bfloat16), dropout_p=0.0, softmax_scale=softmax_scale, causal=True, window_size=(-1, -1), alibi_slopes=None, deterministic=True)
@@ -210,8 +213,8 @@ class Block(nn.Module):
                 # tanh(s_v_init/2), pulling SiLU into its near-linear regime (SiLU(x)~x/2). Divide
                 # the gain by r_init so SiLU stays at its calibrated (variance-1) operating point at
                 # init; s_v still modulates the nonlinearity. Identity to sqrt(d_model) in sphere.
-                mlp_gain = mlp_gain / scale_geometry(scale=self.suv_init_value, geometry=self.config.geometry)
-            suv = (scale_geometry(scale=self.suv * (self.suv_init_value/self.suv_init_scaling), geometry=self.config.geometry) * mlp_gain)
+                mlp_gain = mlp_gain / scale_geometry(scale=self.suv_init_value, geometry=self.config.geometry, gaussian_curvature=self.config.gaussian_curvature)
+            suv = (scale_geometry(scale=self.suv * (self.suv_init_value/self.suv_init_scaling), geometry=self.config.geometry, gaussian_curvature=self.config.gaussian_curvature) * mlp_gain)
             uv = suv * uv
         u, v = torch.chunk(uv, 2, dim=-1)
         x_mlp = u * self.silu(v)
@@ -338,14 +341,14 @@ class GPT(nn.Module):
             logits = self.lm_head(x)
             if (self.config.use_nGPT == 1):
                 sz = self.sz * (self.sz_init_value/self.sz_init_scaling)
-                logits = scale_geometry(scale=sz, geometry=self.config.geometry) * logits
+                logits = scale_geometry(scale=sz, geometry=self.config.geometry, gaussian_curvature=self.config.gaussian_curvature) * logits
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
         else:
             # inference-time mini-optimization: only forward the lm_head on the very last position
             logits = self.lm_head(x[:, [-1], :]) # note: using list [-1] to preserve the time dim
             if (self.config.use_nGPT == 1):
                 sz = self.sz * (self.sz_init_value/self.sz_init_scaling)
-                logits = scale_geometry(scale=sz, geometry=self.config.geometry) * logits
+                logits = scale_geometry(scale=sz, geometry=self.config.geometry, gaussian_curvature=self.config.gaussian_curvature) * logits
             loss = None
 
         return logits, loss
