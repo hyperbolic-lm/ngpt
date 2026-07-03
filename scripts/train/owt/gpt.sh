@@ -1,14 +1,14 @@
 #!/bin/bash
 # Baseline GPT on OpenWebText. One training run (no sweeps/loops inside).
 # Defaults follow launcher.sh's GPT_1kctx_10k_lr30e-4 (nGPT-paper 0.5B reproduce).
-# Env-var knobs (with defaults) so a sweep can parameterize it without edits.
+# Config is composed by Hydra (configs/); knobs below become hydra overrides.
 set -euo pipefail
 export TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1   # torch>=2.6 weights_only default rejects the pickled ckpt
 
 REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 DATA_DIR="${DATA_DIR:-${REPO_ROOT}/data/openwebtext}"   # holds train.bin/val.bin (run data/openwebtext/prepare.py first)
 RUN_NAME="${RUN_NAME:-gpt}"
-OUTPUT_DIR="${OUTPUT_DIR:-${REPO_ROOT}/experiments/openwebtext/${RUN_NAME}}"   # ckpt.pt/stat/args/finished + logs
+OUTPUT_DIR="${OUTPUT_DIR:-${REPO_ROOT}/experiments/openwebtext/${RUN_NAME}}"   # checkpoints/, eval/, .hydra/, stat, args
 
 # --- run shape (launcher.sh: 1k ctx, 10k iters, lr 30e-4, 8 GPUs) --------
 DEVICES="${DEVICES:-8}"                  # nproc_per_node (GPUs on this node; launcher uses 8)
@@ -21,7 +21,7 @@ EVAL_ITERS="${EVAL_ITERS:-1000}"
 TIME_LIMIT_SECONDS="${TIME_LIMIT_SECONDS:-103700}"     # wall-clock stop (for chunked SLURM resume)
 MAX_ITERS_PER_LAUNCH="${MAX_ITERS_PER_LAUNCH:-14000}"  # per-job step cap (for chunked SLURM resume)
 WEIGHT_DTYPE="${WEIGHT_DTYPE:-bfloat16}"   # bfloat16 | float32 (storage of matrix weights)
-COMPILE="${COMPILE:-False}"
+COMPILE="${COMPILE:-false}"                # hydra bool: lowercase true|false
 
 # --- model (launcher.sh: nGPT-paper 0.5B) --------------------------------
 N_LAYER="${N_LAYER:-24}"
@@ -32,7 +32,7 @@ BLOCK_SIZE="${BLOCK_SIZE:-1024}"
 #   BLOCK_SIZE=4096 PER_GPU_BS=2 GLOBAL_BATCH=512 MAX_ITERS_PER_LAUNCH=18000 bash scripts/train/owt/gpt.sh
 
 # --- wandb (optional) ----------------------------------------------------
-WANDB_LOG="${WANDB_LOG:-False}"
+WANDB_LOG="${WANDB_LOG:-false}"
 WANDB_PROJECT="${WANDB_PROJECT:-openwebtext-ngpt}"
 
 # grad accumulation is the GLOBAL value; train.py divides it by world size.
@@ -46,20 +46,21 @@ fi
 
 mkdir -p "${OUTPUT_DIR}"
 if [ -f "${OUTPUT_DIR}/finished" ]; then echo "${RUN_NAME} already finished"; exit 0; fi
-if [ -f "${OUTPUT_DIR}/ckpt.pt" ]; then INIT=resume; else INIT=scratch; fi
+if [ -f "${OUTPUT_DIR}/checkpoints/ckpt.pt" ]; then INIT=resume; else INIT=scratch; fi
 
 cd "${REPO_ROOT}"
+# Hydra overrides (no leading --). model=gpt sets use_nGPT/weight_decay/warmup_iters.
 torchrun --nnodes=1 --nproc_per_node="${DEVICES}" --rdzv_backend=c10d --rdzv_endpoint=localhost:0 train.py \
-    --init_from="${INIT}" \
-    --use_nGPT=0 \
-    --weight_decay=0.1 --warmup_iters=2000 \
-    --learning_rate="${LR}" --min_lr=0.0 \
-    --n_layer="${N_LAYER}" --n_head="${N_HEAD}" --n_embd="${N_EMBD}" --block_size="${BLOCK_SIZE}" \
-    --weight_dtype="${WEIGHT_DTYPE}" --dtype=bfloat16 \
-    --batch_size="${PER_GPU_BS}" --gradient_accumulation_steps="${GRAD_ACCUM}" \
-    --max_iters="${MAX_ITERS}" --lr_decay_iters="${MAX_ITERS}" \
-    --eval_interval="${EVAL_INTERVAL}" --eval_iters="${EVAL_ITERS}" --log_interval=10 \
-    --time_limit_seconds="${TIME_LIMIT_SECONDS}" --max_iters_per_launch="${MAX_ITERS_PER_LAUNCH}" \
-    --compile="${COMPILE}" \
-    --dataset=openwebtext --data_dir="${DATA_DIR}" --out_dir="${OUTPUT_DIR}" \
-    --wandb_log="${WANDB_LOG}" --wandb_project="${WANDB_PROJECT}" --wandb_run_name="${RUN_NAME}"
+    model=gpt \
+    data=openwebtext \
+    init_from="${INIT}" \
+    learning_rate="${LR}" min_lr=0.0 \
+    n_layer="${N_LAYER}" n_head="${N_HEAD}" n_embd="${N_EMBD}" block_size="${BLOCK_SIZE}" \
+    weight_dtype="${WEIGHT_DTYPE}" dtype=bfloat16 \
+    batch_size="${PER_GPU_BS}" gradient_accumulation_steps="${GRAD_ACCUM}" \
+    max_iters="${MAX_ITERS}" lr_decay_iters="${MAX_ITERS}" \
+    eval_interval="${EVAL_INTERVAL}" eval_iters="${EVAL_ITERS}" log_interval=10 \
+    time_limit_seconds="${TIME_LIMIT_SECONDS}" max_iters_per_launch="${MAX_ITERS_PER_LAUNCH}" \
+    compile="${COMPILE}" \
+    data_dir="${DATA_DIR}" out_dir="${OUTPUT_DIR}" \
+    wandb_log="${WANDB_LOG}" wandb_project="${WANDB_PROJECT}" wandb_run_name="${RUN_NAME}"

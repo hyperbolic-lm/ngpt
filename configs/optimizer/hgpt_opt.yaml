@@ -1,0 +1,8 @@
+# --- optimizer -------------------------------------------------------------
+learning_rate: 15e-4
+min_lr: 0.0
+beta1: 0.9
+beta2: 0.95
+grad_clip: 1.0
+weight_decay: 0.0
+warmup_iters: 0

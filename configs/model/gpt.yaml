@@ -1,0 +1,5 @@
+# @package _global_
+# Baseline GPT (pre-LN transformer). Weight decay + LR warmup as in the paper.
+use_nGPT: 0
+weight_decay: 0.1
+warmup_iters: 2000

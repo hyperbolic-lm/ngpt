@@ -43,6 +43,7 @@ $ torchrun --nproc_per_node=8 --nnodes=2 --node_rank=1 --master_addr=123.456.123
 import os
 import time
 import math
+import json
 import pickle
 import sys
 from contextlib import nullcontext
@@ -53,77 +54,34 @@ import torch
 from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.distributed as dist
 from model import GPTConfig, GPT
+from configs.validator import Validator
 from torch.nn import functional as F
 from datetime import timedelta
 
 # -----------------------------------------------------------------------------
 # I/O
 
-eval_interval = 1000
-log_interval = 10
-eval_iters = 200
-eval_only = False # if True, script exits right after the first eval
-always_save_checkpoint = True # if True, always save a checkpoint after each eval
-init_from = 'scratch' # 'scratch' or 'resume' or 'gpt2*'
-# wandb logging
-wandb_log = False # disabled by default
-wandb_project = 'owt'
-wandb_run_name = 'gpt2' # 'run' + str(time.time())
-# data
-dataset = 'openwebtext'
-data_dir = '' # absolute path to the dir holding train.bin/val.bin; '' = legacy auto-detect relative to cwd
-out_dir = './' # where ckpt.pt/stat/args/finished are written (e.g. somewhere on /scratch)
-gradient_accumulation_steps = 64 # used to simulate larger batch sizes
-batch_size = 8 # if gradient_accumulation_steps > 1, this is the micro-batch size
-# model
-dropout = 0.0 # for pretraining 0 is good, for finetuning try 0.1+
-bias = False # do we use bias inside LayerNorm and Linear layers?
-# adamw optimizer
-max_iters = 600000 # total number of training iterations
-beta1 = 0.9
-beta2 = 0.95
-grad_clip = 1.0 # clip gradients at this value, or disable if == 0.0
-# learning rate decay settings
-decay_lr = True # whether to decay the learning rate
-lr_decay_iters = 600000 # should be ~= max_iters per Chinchilla
-# DDP settings
-backend = 'nccl' # 'nccl', 'gloo', etc.
-# system
-device = 'cuda' # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1' etc., or try 'mps' on macbooks
-dtype = 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16' # 'float32', 'bfloat16', or 'float16', the latter will auto implement a GradScaler
-weight_dtype = 'bfloat16' # 'bfloat16' or 'float32': storage dtype of the matrix parameters (embeddings stay float32)
-compile = False # use PyTorch 2.0 to compile the model to be faster
-# 
-time_limit_seconds = 1000000000     # stop after x seconds 
-max_iters_per_launch = 1000000000   # stop after x steps of the current
-
-use_nGPT = 1
-learning_rate = 15e-4 
-
-# model size and seqlen
-if (1): 
-    n_layer = 12
-    n_head = 16
-    n_embd = 1024
-    block_size = 1024 # = context/sequence length
-
-if (use_nGPT == 0):
-    min_lr = 0.0 
-    weight_decay = 0.1
-    warmup_iters = 2000 
-if (use_nGPT == 1):
-    min_lr = 0.0
-    weight_decay = 0.0
-    warmup_iters = 0 
+# Configuration is composed by Hydra from configs/ (replaces configurator.py).
+# We use the Compose API instead of @hydra.main on purpose: train.py is launched
+# by torchrun as N independent processes, and @hydra.main would make every rank
+# create its own timestamped run-dir and chdir into it. compose() just builds the
+# config (group defaults + CLI overrides) identically in every rank with no chdir;
+# out_dir is set explicitly in the config and shared across ranks.
+#
+# Override hydra-style (no leading --), e.g.:
+#   torchrun ... train.py model=ngpt data=openwebtext out_dir=/scratch/run max_iters=10000
+from hydra import compose, initialize_config_dir
+from omegaconf import OmegaConf
+_cfg_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'configs')
+with initialize_config_dir(version_base=None, config_dir=_cfg_dir):
+    cfg = compose(config_name='config', overrides=sys.argv[1:])
+config = OmegaConf.to_container(cfg, resolve=True)  # plain dict (for wandb + checkpoint)
+config = Validator.validate(config)
+globals().update(config)  # expose every config field as a module global (as configurator.py did)
+# -----------------------------------------------------------------------------
 
 tlaunch = time.time()
 print("Current Directory:", os.getcwd())
-# the input configurations will overwrite all configs given above!
-# -----------------------------------------------------------------------------
-config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
-exec(open('configurator.py').read()) # overrides from command line or config file
-config = {k: globals()[k] for k in config_keys} # will be useful for logging
-# -----------------------------------------------------------------------------
 
 if (use_nGPT == 0):
     base_scale = 0.02 # can be interpreted as init_std
@@ -159,8 +117,12 @@ print(f"tokens per iteration will be: {tokens_per_iter:,}")
 
 
 if master_process:
-    if not os.path.exists(out_dir):
-        os.makedirs(out_dir)
+    # output layout (see Agent.md "Training and Sampling Outputs"):
+    #   out_dir/{checkpoints/, eval/, .hydra/config.yaml, stat, args, finished}
+    os.makedirs(os.path.join(out_dir, 'checkpoints'), exist_ok=True)
+    os.makedirs(os.path.join(out_dir, 'eval'), exist_ok=True)
+    os.makedirs(os.path.join(out_dir, '.hydra'), exist_ok=True)
+    OmegaConf.save(cfg, os.path.join(out_dir, '.hydra', 'config.yaml'))
 
 
 local_seed = seed_offset
@@ -171,6 +133,11 @@ torch.cuda.manual_seed(local_seed)
 
 torch.backends.cuda.matmul.allow_tf32 = True # allow tf32 on matmul
 torch.backends.cudnn.allow_tf32 = True # allow tf32 on cudnn
+# The custom-scale SDPA in model.py dispatches to the cuDNN attention backend on
+# Hopper (H200), which fails to build a plan ("No valid execution plans built").
+# Disable it so SDPA falls back to the flash / mem-efficient kernels (same math).
+if hasattr(torch.backends.cuda, 'enable_cudnn_sdp'):
+    torch.backends.cuda.enable_cudnn_sdp(False)
 device_type = 'cuda' if 'cuda' in device else 'cpu' # for later use in torch.autocast
 # note: float16 data type will automatically use a GradScaler
 ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[dtype]
@@ -234,7 +201,7 @@ if init_from == 'scratch':
 elif init_from == 'resume':
     print(f"Resuming training from {out_dir}")
     # resume training from a checkpoint.
-    ckpt_path = os.path.join(out_dir, 'ckpt.pt')
+    ckpt_path = os.path.join(out_dir, 'checkpoints', 'ckpt.pt')
     checkpoint = torch.load(ckpt_path, map_location=device)
     checkpoint_model_args = checkpoint['model_args']
     # force these config attributes to be equal otherwise we can't even resume training
@@ -447,6 +414,15 @@ while True:
                 "lr": lr
             })
 
+        # evaluation results -> out_dir/eval/ppl.json (Agent.md "Training and Sampling Outputs")
+        val_nll = float(losses['val'])
+        with open(os.path.join(out_dir, 'eval', 'ppl.json'), 'w') as f:
+            json.dump({'iter': iter_num,
+                       'train/nll': float(losses['train']),
+                       'val/nll': val_nll,
+                       'val/ppl': math.exp(val_nll),
+                       'val/bpd': val_nll / math.log(2)}, f, indent=2)
+
         if always_save_checkpoint:
             if iter_num > starting_iter_num:
                 tcheckpointsaving_begin = time.time()
@@ -459,8 +435,9 @@ while True:
                     'rng_state_pytorch_bytes': rng_state_bytes,
                     'rng_state_numpy': np.random.get_state()
                 }
-                print(f"saving checkpoint to {out_dir}")
-                torch.save(checkpoint, os.path.join(out_dir, 'ckpt.pt'))
+                ckpt_out = os.path.join(out_dir, 'checkpoints', 'ckpt.pt')
+                print(f"saving checkpoint to {ckpt_out}")
+                torch.save(checkpoint, ckpt_out)
                 print("Checkpoint saving time: %f sec" % (time.time()-tcheckpointsaving_begin))
     
     if iter_num == 0 and eval_only:

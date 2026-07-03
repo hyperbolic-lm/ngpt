@@ -1,0 +1,4 @@
+# @package _global_
+# TinyStories, GPT-2 BPE. Prepare with: python data/tinystories/prepare.py
+dataset: tinystories
+data_dir: data/tinystories   # holds train.bin/val.bin (override with an absolute path)

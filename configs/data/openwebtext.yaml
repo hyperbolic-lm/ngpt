@@ -1,0 +1,4 @@
+# @package _global_
+# OpenWebText, GPT-2 BPE. Prepare with: python data/openwebtext/prepare.py
+dataset: openwebtext
+data_dir: data/openwebtext   # holds train.bin/val.bin (override with an absolute path)

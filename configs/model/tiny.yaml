@@ -1,0 +1,7 @@
+n_layer: 8
+n_head: 8
+n_embd: 512
+block_size: 180
+dropout: 0.0
+bias: false
+weight_dtype: bfloat16         # bfloat16 | float32 (storage of matrix weights)
