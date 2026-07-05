@@ -133,6 +133,8 @@ and `/projects` are shared across clusters. Jobs require an allocation
 naming (preemptable = lower priority, can be killed). Request GPUs with
 `--partition=<queue> --gres=gpu:<n>`. (Exact submission flags: see the docs.)
 
+**shengyenc@arc** — the account Claude Code sessions run as; submit SLURM directly.
+
 Login Nodes
 - tinkercliffs1, tinkercliffs2 — TinkerCliffs cluster
 - falcon1, falcon2 — Falcon cluster
@@ -156,6 +158,9 @@ Login Nodes
     - V100-16GB — 80 GPUs  (40 nodes × 2) | `v100_normal_q`, `v100_preemptable_q`
     - T4-16GB   — 18 GPUs  (18 nodes × 1) | `t4_normal_q`, `t4_preemptable_q`
 
+- Storage:
+  - Use ``/scratch/shengyenc/workspace`` to save checkpoints and dataset. But the storage is only available on compute nodes
+
 (ARC also exposes A100-80GB on the CUI and Biomed clusters via their own `a100_*_q`
 queues — see the docs page above.)
 
@@ -168,8 +173,8 @@ For each experiment, create a project folder under ``experiments`` with ``{proje
 ### Anaconda Environment
 
 ```bash
-conda create -n sfm python=3.12
-conda activate sfm
+conda create -n hlm python=3.11.15
+conda activate hlm
 pip install -r requirements.txt
 ```
 
@@ -177,6 +182,7 @@ pip install -r requirements.txt
 
 - Create functions / classes in ``experiment.py`` to set up the soft link of the checkpoint for training and sampling run (if needed)
 - If use ``ch2263@Unicorn``, save the checkpoints at ``/scratch/ch2263/syc_workspace/ngpt_output/{project_name}/{run_name}/checkpoints`` and create a soft link at ``${OUTPUT_DIR}/checkpoints`` to link the actual checkpoint path ``/scratch/ch2263/syc_workspace/ngpt_output/{project_name}/{run_name}/checkpoints`` before the training starts. This should be handle in ``experiment.py``
+- If use ``ch2263@Unicorn``, save the checkpoints at ``/scratch/shengyenc/workspace/ngpt_output/{project_name}/{run_name}/checkpoints`` and create a soft link at ``${OUTPUT_DIR}/checkpoints`` to link the actual checkpoint path ``/scratch/shengyenc/workspace/ngpt_output/{project_name}/{run_name}/checkpoints`` before the training starts. This should be handle in ``experiment.py``
 - The sweep.py of each experiment should use setup method in ``experiment.py`` to handle the storage of ch2263@unicorn
 
 ### Training Script
