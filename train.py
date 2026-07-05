@@ -69,7 +69,7 @@ from datetime import timedelta
 # out_dir is set explicitly in the config and shared across ranks.
 #
 # Override hydra-style (no leading --), e.g.:
-#   torchrun ... train.py model=ngpt data=openwebtext out_dir=/scratch/run max_iters=10000
+#   torchrun ... train.py model=medium optimizer=ngpt_opt use_nGPT=1 data=openwebtext out_dir=/scratch/run max_iters=10000
 from hydra import compose, initialize_config_dir
 from omegaconf import OmegaConf
 _cfg_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'configs')

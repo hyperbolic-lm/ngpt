@@ -44,10 +44,12 @@ if [ -f "${OUTPUT_DIR}/finished" ]; then echo "${RUN_NAME} already finished"; ex
 if [ -f "${OUTPUT_DIR}/checkpoints/ckpt.pt" ]; then INIT=resume; else INIT=scratch; fi
 
 cd "${REPO_ROOT}"
-# Hydra overrides (no leading --). model=ngpt sets use_nGPT=1, weight_decay=0, warmup_iters=0;
+# Hydra overrides (no leading --). model=small (size) + optimizer=ngpt_opt + use_nGPT=1 = nGPT recipe;
 # train.py then derives base_scale=1/sqrt(n_embd).
 torchrun --nnodes=1 --nproc_per_node="${DEVICES}" --rdzv_backend=c10d --rdzv_endpoint=localhost:0 train.py \
-    model=ngpt \
+    model=small \
+    optimizer=ngpt_opt \
+    use_nGPT=1 \
     data=tinystories \
     init_from="${INIT}" \
     learning_rate="${LR}" min_lr=0.0 \

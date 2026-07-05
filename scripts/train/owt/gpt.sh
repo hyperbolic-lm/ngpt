@@ -49,9 +49,11 @@ if [ -f "${OUTPUT_DIR}/finished" ]; then echo "${RUN_NAME} already finished"; ex
 if [ -f "${OUTPUT_DIR}/checkpoints/ckpt.pt" ]; then INIT=resume; else INIT=scratch; fi
 
 cd "${REPO_ROOT}"
-# Hydra overrides (no leading --). model=gpt sets use_nGPT/weight_decay/warmup_iters.
+# Hydra overrides (no leading --). model=medium (size) + optimizer=gpt_opt + use_nGPT=0 = GPT recipe.
 torchrun --nnodes=1 --nproc_per_node="${DEVICES}" --rdzv_backend=c10d --rdzv_endpoint=localhost:0 train.py \
-    model=gpt \
+    model=medium \
+    optimizer=gpt_opt \
+    use_nGPT=0 \
     data=openwebtext \
     init_from="${INIT}" \
     learning_rate="${LR}" min_lr=0.0 \

@@ -3,15 +3,15 @@
 # The model/ and data/ group files use "# @package _global_" so their keys are
 # merged at the top level, matching the flat variable names train.py expects
 # (train.py does globals().update(cfg)). Override from the CLI hydra-style, e.g.
-#   torchrun ... train.py model=ngpt data=tinystories out_dir=... max_iters=10000
+#   torchrun ... train.py model=small optimizer=ngpt_opt use_nGPT=1 data=tinystories out_dir=... max_iters=10000
 defaults:
   - _self_
   - model: regular          # tiny | small | medium | large | regular, define the number of layers, heads, embedding size
   - data: openwebtext    # openwebtext | tinystories  (sets dataset, data_dir)
-  - optimizer: gpt_opt.yaml
+  - optimizer: gpt_opt
 
 # --- I/O -------------------------------------------------------------------
-data_dir = '' # absolute path to the dir holding train.bin/val.bin; '' = legacy auto-detect relative to cwd
+data_dir: '' # absolute path to the dir holding train.bin/val.bin; '' = legacy auto-detect relative to cwd
 out_dir: ./out                 # run dir: checkpoints/, eval/, .hydra/, stat, args, finished
 init_from: scratch             # scratch | resume
 eval_interval: 1000

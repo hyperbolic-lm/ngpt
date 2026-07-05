@@ -1,6 +1,0 @@
-# @package _global_
-# nGPT (normalized transformer on the hypersphere). No weight decay, no warmup;
-# train.py derives base_scale = 1/sqrt(n_embd) from use_nGPT=1.
-use_nGPT: 1
-weight_decay: 0.0
-warmup_iters: 0
