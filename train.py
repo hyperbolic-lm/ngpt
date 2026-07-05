@@ -411,6 +411,9 @@ while True:
                 "iter": iter_num,
                 "train/loss": losses['train'],
                 "val/loss": losses['val'],
+                "train/ppl": math.exp(float(losses['train'])),
+                "val/ppl": math.exp(float(losses['val'])),
+                "val/bpd": float(losses['val']) / math.log(2),
                 "lr": lr
             })
 

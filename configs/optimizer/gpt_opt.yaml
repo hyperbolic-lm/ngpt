@@ -1,5 +1,6 @@
 # @package _global_
 # --- optimizer -------------------------------------------------------------
+recipe: gpt                    # pairs with use_nGPT=0; validator enforces this. wd/warmup below are overridable.
 learning_rate: 15e-4
 min_lr: 0.0
 beta1: 0.9
