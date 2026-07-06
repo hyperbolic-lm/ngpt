@@ -1,0 +1,11 @@
+# @package _global_
+# nGPT-paper 0.5B reproduction architecture (GPT-2 medium scale: 24 layers, 16 heads,
+# 1024 dim, ctx 1024). Used by scripts/train/owt/*.sh (launcher.sh's *_1kctx_10k_lr30e-4).
+# For the 4k-ctx variant, copy this file and set block_size: 4096.
+n_layer: 24
+n_head: 16
+n_embd: 1024
+block_size: 1024
+dropout: 0.0
+bias: false
+weight_dtype: bfloat16         # bfloat16 | float32 (storage of matrix weights)

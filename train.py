@@ -55,6 +55,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.distributed as dist
 from model import GPTConfig, GPT
 from configs.validator import Validator
+from utils import Initialization
 from torch.nn import functional as F
 from datetime import timedelta
 
@@ -87,6 +88,13 @@ if (use_nGPT == 0):
     base_scale = 0.02 # can be interpreted as init_std
 if (use_nGPT == 1):
     base_scale = 1.0 / n_embd ** 0.5
+
+# run prep (moved out of the training bash scripts into utils.py): make out_dir, skip if this
+# run already produced a `finished` marker, and auto-detect resume vs scratch from ckpt.pt.
+_run = Initialization(config)
+if not _run.begin():
+    sys.exit(0)
+init_from = _run.init_from
 
 # various inits, derived attributes, I/O setup
 ddp = int(os.environ.get('RANK', -1)) != -1 # is this a ddp run?
