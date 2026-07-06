@@ -20,11 +20,7 @@ EVAL_ITERS="${EVAL_ITERS:-200}"
 WEIGHT_DTYPE="${WEIGHT_DTYPE:-bfloat16}"   # bfloat16 | float32 (storage of matrix weights)
 COMPILE="${COMPILE:-false}"                # hydra bool: lowercase true|false
 
-# --- model (s-flm "small": GPT-2-small scale) ----------------------------
-N_LAYER="${N_LAYER:-12}"
-N_HEAD="${N_HEAD:-12}"
-N_EMBD="${N_EMBD:-768}"
-BLOCK_SIZE="${BLOCK_SIZE:-1024}"
+# model architecture (n_layer/n_head/n_embd/block_size) comes from configs/model/small.yaml (12L/12H/768d, ctx 1024)
 
 # --- wandb (optional) ----------------------------------------------------
 WANDB_LOG="${WANDB_LOG:-false}"
@@ -39,7 +35,6 @@ torchrun --nnodes=1 --nproc_per_node="${DEVICES}" --rdzv_backend=c10d --rdzv_end
     use_nGPT=0 \
     data=tinystories \
     learning_rate="${LR}" min_lr=0.0 \
-    n_layer="${N_LAYER}" n_head="${N_HEAD}" n_embd="${N_EMBD}" block_size="${BLOCK_SIZE}" \
     weight_dtype="${WEIGHT_DTYPE}" dtype=bfloat16 \
     batch_size="${BATCH_SIZE}" gradient_accumulation_steps="${GRAD_ACCUM}" \
     max_iters="${MAX_ITERS}" lr_decay_iters="${MAX_ITERS}" \

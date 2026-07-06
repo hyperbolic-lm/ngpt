@@ -33,7 +33,6 @@ torchrun --nnodes=1 --nproc_per_node="${DEVICES}" --rdzv_backend=c10d --rdzv_end
     use_nGPT=1 \
     data=tinystories \
     learning_rate="${LR}" min_lr=0.0 \
-    n_layer="${N_LAYER}" n_head="${N_HEAD}" n_embd="${N_EMBD}" block_size="${BLOCK_SIZE}" \
     weight_dtype="${WEIGHT_DTYPE}" dtype=bfloat16 \
     batch_size="${BATCH_SIZE}" gradient_accumulation_steps="${GRAD_ACCUM}" \
     max_iters="${MAX_ITERS}" lr_decay_iters="${MAX_ITERS}" \
