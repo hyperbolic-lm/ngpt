@@ -80,9 +80,9 @@ SLURM binaries live at `/usr/local/slurm/current/bin` (prepend to `PATH`). Parti
 
 **sc3379@Unicorn** — the account Claude Code sessions run as; submit SLURM directly.
 
-- Interconnection between sc3379 and ch2263: local account here. `sbatch`/`squeue`
+- Interconnection from sc3379 to ch2263: local account here. `sbatch`/`squeue`
   work directly once `/usr/local/slurm/current/bin` is on `PATH`. To reach `ch2263`,
-- Interconnection between sc3379@unicorn and shengyenc@arc
+- Interconnection from sc3379@unicorn to shengyenc@arc
   - Use ``tailscale`` to check the IP address of the target login node and then use
   ``ssh -o "ProxyCommand=/home/sc3379/bin/tailscale --socket=/home/sc3379/.tailscale/{target_host_socket} nc %h %p" -i ~/.ssh/unicorn_internal shengyenc@{ip_address}``
   - ``{target_host_socket}`` is the ``tailscaled`` daemon socket of the host you run this from
@@ -104,7 +104,7 @@ SLURM binaries live at `/usr/local/slurm/current/bin` (prepend to `PATH`). Parti
 
 **ch2263@Unicorn** — borrowed account, reached over SSH from sc3379.
 
-- Interconnection between sc3379 and ch2263:
+- Interconnection from sc3379 to ch2263:
   `ssh -i /home/sc3379/.ssh/unicorn_internal ch2263@unicorn-login-02.coecis.cornell.edu`.
   SLURM needs a **login shell** — wrap remote commands as `ssh ... 'bash -lc "<cmd>"'`
   (`sbatch`/`squeue` are not on the non-login `PATH`).
@@ -135,9 +135,15 @@ Login Nodes
 
 - Interconnection between login nodes: 
   - identity file ``~/.ssh/id_rsa``
-- Interconnection between Unicorn and Arc:
+- Interconnection from shengyenc@arc to sc3379@unicorn:
   - Use ``tailscale`` to check the IP address of the target login node and then use
   ``ssh -o "ProxyCommand=/home/shengyenc/bin/tailscale --socket=/home/shengyenc/.tailscale/{target_host_socket} nc %h %p" -i ~/.ssh/id_rsa sc3379@{ip_address}``
+  - ``{target_host_socket}`` is the ``tailscaled`` daemon socket of the ARC node you run this from
+    (its filename encodes that node; see ``ls ~/.tailscale``). This reverse direction is not yet
+    verified from this repo.
+- Interconnection from shengyenc@arc to ch2263@unicorn:
+  - Use ``tailscale`` to check the IP address of the target login node and then use
+  ``ssh -o "ProxyCommand=/home/shengyenc/bin/tailscale --socket=/home/shengyenc/.tailscale/{target_host_socket} nc %h %p" -i ~/.ssh/id_rsa ch2263@{ip_address}``
   - ``{target_host_socket}`` is the ``tailscaled`` daemon socket of the ARC node you run this from
     (its filename encodes that node; see ``ls ~/.tailscale``). This reverse direction is not yet
     verified from this repo.
